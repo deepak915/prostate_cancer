@@ -1,0 +1,234 @@
+---
+title: "Final_Project"
+author: "Deepak Dhankani"
+date: "11/18/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(zoo)
+library(extdplyr)
+library(data.table)
+library(tableone)
+library(kableExtra)
+
+```
+
+
+```{r data}
+master_data <- fread("Seer_2004_2015.csv")
+
+nrow(master_data)
+```
+
+```{r}
+prostate <- master_data %>% 
+  filter(CSSCHEMA == "69", SEX == "1") %>%
+  filter(HST_STGA == "4"|HST_STGA == "8")
+
+nrow(prostate)
+head(prostate)
+```
+
+
+```{r}
+dup <- master_data %>%
+  filter(CSSCHEMA == "69" & SEX == "1") %>%
+  group_by(PUBCSNUM) %>%
+  summarise(n = n()) %>%
+  filter(n>=2)
+
+dup
+```
+
+```{r}
+dou <- prostate[which(prostate$PUBCSNUM %in% c(dup$PUBCSNUM)),]
+
+prostate <- prostate[!duplicated(prostate$PUBCSNUM),]
+nrow(prostate)
+```
+
+
+```{r}
+prostate <- prostate %>% 
+  select(PUBCSNUM,SEX,RACE1V,YR_BRTH,MDXRECMP,YEAR_DX,AGE_DX,HISTREC,RAC_RECA,RAC_RECY,ORIGRECB,ST_CNTY,CODPUB,HST_STGA,SEQ_NUM,REG)
+# datause: filter prostate cancer and select columns, not deal with ages
+```
+
+```{r}
+head(prostate)
+```
+
+```{r}
+prostate1 <- prostate %>% 
+  filter(AGE_DX >= 50 & AGE_DX!=999) %>%
+  mutate(date = sprintf("%d-%02d", YEAR_DX, MDXRECMP)) %>%
+  mutate(PSA = ifelse(date > "2011-10","After PSA","Before PSA")) %>%
+  mutate(PSA = factor(PSA, levels = c("Before PSA","After PSA"))) %>%
+  mutate(stage =ifelse(HST_STGA == "4","distant","localized/regional")) %>%
+  mutate(age = ifelse(AGE_DX > 70,">70","50-70"))
+
+nrow(prostate1)
+```
+
+```{r}
+head(prostate1)
+```
+
+```{r}
+tbl_data <- prostate1 %>% 
+  select(RAC_RECA, PSA, stage, age) %>% 
+  mutate(RAC_RECA = factor(RAC_RECA))
+
+tbl1 <- CreateTableOne(vars = c("RAC_RECA", "stage", "age"), data = tbl_data, strata = c("PSA"))
+
+tbl1
+```
+
+
+##Question 1 
+
+```{r q1-1, message=F}
+local_cases <- prostate1 %>%
+  group_by(date, age,HST_STGA) %>%
+  summarize(cases = n()) %>%
+  filter(HST_STGA==8)
+  
+total_cases <- prostate1 %>%
+  group_by(date,age) %>%
+  summarize(total_cases = n())
+
+q1_table<- inner_join(local_cases, total_cases, by = c("date" = "date","age"= "age")) %>%
+  mutate(proportion = cases/total_cases)
+
+q1_table %>%
+  ggplot(aes(x= as.yearmon(date), y= proportion, col = age)) + geom_point(size = 0.1) + geom_smooth()
+```
+
+```{r q1-2}
+q1_counts<- ftable(prostate1 %>%
+  select(PSA, stage,age))
+
+q1_counts
+```
+
+```{r q1-3}
+round(prop.table(q1_counts,1),4)
+```
+
+```{r q1-4}
+#before PSA
+prop.test(c(50057,98657),c(4173+50057,2906+98657))
+```
+
+```{r q1-5}
+#after PSA
+prop.test(c(18034,44656),c(2777+18034,2240+44656))
+```
+
+```{r q1-6}
+#50-70
+prop.test(c(98657,44656),c(2906+98657,2240+44656))
+```
+
+```{r q1-7}
+#>70
+prop.test(c(50057,18034),c(4173+50057,2777+18034))
+```
+
+##Question 2
+
+```{r q2-1}
+race_localized<- 
+  prostate1 %>%
+  filter( (RAC_RECA == "1" | RAC_RECA == "2") & stage == "localized/regional") %>%
+  mutate(race = ifelse(RAC_RECA == "1","White", "Black")) %>%
+  group_by(date, race) %>%
+  summarize(cases = n()) 
+
+race_total <- 
+  prostate1 %>%
+  filter(RAC_RECA == "1" | RAC_RECA == "2") %>%
+  mutate(race = ifelse(RAC_RECA == "1","White", "Black")) %>%
+  group_by(date, race) %>%
+  summarize(total_cases = n())
+
+race_table <- inner_join(race_localized, race_total, by = c("date" = "date","race"= "race")) %>%
+  mutate(proportion = cases/total_cases)
+
+```
+
+```{r q2-2}
+ggplot(race_table, aes(x= as.yearmon(date), y= proportion, col = race)) + 
+  geom_point(size = 0.1) + 
+  geom_smooth() + 
+  geom_vline(xintercept = as.yearmon("2011-10"), linetype="dotted") 
+```
+
+```{r q2-3}
+q2_counts<- ftable(prostate1 %>%
+  filter(RAC_RECA == "1" | RAC_RECA == "2") %>%
+  mutate(race = ifelse(RAC_RECA == "1","White", "Black")) %>%
+  select(PSA, stage,race))
+
+q2_counts
+```
+
+```{r q2-4}
+round(prop.table(q2_counts,1),4)
+```
+
+```{r q2-5}
+#before PSA
+prop.test(c(19181,118125),c(1222+19181,5276+118125), correct = FALSE)
+```
+
+```{r q2-6}
+#after PSA
+prop.test(c(9087,48225),c(9087+800,48225+3759))
+```
+
+```{r q2-7}
+#black
+prop.test(c(19181, 9087),c(1222+19181,800+9087))
+```
+
+```{r q2-8}
+#white
+prop.test(c(118125,48225),c(5276+118125,3759+48225))
+```
+
+```{r q3-1}
+
+q1_table %>%
+  ggplot(aes(x= as.yearmon(date), y= proportion, col = age)) + 
+  geom_point(size = 0.1) + 
+  geom_smooth() + 
+  geom_vline(xintercept = as.yearmon("2011-10"),linetype="dotted")
+```
+
+```{r q4}
+year_count<-prostate1 %>%
+  group_by(YEAR_DX) %>%
+  filter(YEAR_DX== '2004'| YEAR_DX == '2015') %>%
+  summarize(total_cases = n())
+
+year_localized <- prostate1 %>%
+  filter(HST_STGA == 8) %>%
+  group_by(YEAR_DX) %>%
+  filter(YEAR_DX== '2004'| YEAR_DX == '2015') %>%
+  summarize(cases = n())
+
+year_compare <- inner_join(year_count, year_localized, by = ("YEAR_DX"="YEAR_DX")) %>% 
+  mutate(Proportion = cases/total_cases) %>% round(4) %>%
+  select(Year = YEAR_DX, Proportion)
+
+year_compare
+```
+
